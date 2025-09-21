@@ -4,6 +4,7 @@ import json
 import os
 import time
 import random
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin
 
@@ -16,7 +17,15 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
-def fetch_with_retry(url, retries=3, backoff_factor=0.5):
+def sanitize_key(text):
+    """Membersihkan teks untuk dijadikan kunci JSON yang valid."""
+    text = text.lower()
+    text = text.replace(' ', '_')
+    # Hapus semua karakter yang bukan huruf, angka, atau underscore
+    text = re.sub(r'[^a-z0-9_]', '', text)
+    return text
+
+def fetch_with_retry(url, retries=3, backoff_factor=0.8):
     """Mencoba mengambil URL beberapa kali jika terjadi error server."""
     for i in range(retries):
         try:
@@ -24,96 +33,115 @@ def fetch_with_retry(url, retries=3, backoff_factor=0.5):
             response.raise_for_status()
             return response
         except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
             if e.response.status_code in [503, 500, 502, 504]:
-                print(f"Server error {e.response.status_code} for {url}. Retrying in {backoff_factor * (2 ** i)}s...")
-                time.sleep(backoff_factor * (2 ** i))
+                wait_time = backoff_factor * (2 ** i)
+                print(f"  -> Server error {e.response.status_code} for {url}. Retrying in {wait_time:.2f}s...")
+                time.sleep(wait_time)
             else:
-                raise # Lemparkan error lain yang bukan karena server
-        except requests.exceptions.RequestException as e:
-            print(f"Request error for {url}: {e}. Retrying...")
-            time.sleep(backoff_factor * (2 ** i))
-    # Jika semua percobaan gagal
-    print(f"Failed to fetch {url} after {retries} retries.")
+                return None
+        except requests.exceptions.RequestException:
+            wait_time = backoff_factor * (2 ** i)
+            time.sleep(wait_time)
+    
     return None
 
-def scrape_episode_details(detail_url):
+def _parse_watch_page(soup, detail_url):
+    """Helper untuk mem-parsing data dari halaman /watch (data lengkap)."""
+    title_element = soup.select_one('.anisc-detail .film-name a')
+    title = title_element.get_text(strip=True) if title_element else None
+    if not title: return None
+
+    description_element = soup.select_one('.film-description .text')
+    description = description_element.get_text(strip=True).replace("... + More", "").strip() if description_element else "No description available."
+    
+    poster_element = soup.select_one('.anisc-poster .film-poster-img')
+    image_url = poster_element['src'] if poster_element and poster_element.has_attr('src') else None
+
+    iframe_element = soup.select_one('iframe#iframe-embed')
+    streaming_url = iframe_element['src'] if iframe_element and iframe_element.has_attr('src') else None
+
+    servers = {'sub': [], 'dub': []}
+    server_blocks = soup.select('.ps_-block')
+    for block in server_blocks:
+        server_type = 'dub' if 'servers-dub' in block.get('class', []) else 'sub'
+        server_items = block.select('.server-item')
+        for item in server_items:
+            servers[server_type].append({'name': item.get_text(strip=True), 'data_id': item.get('data-id')})
+
+    episodes = []
+    episode_list_items = soup.select('.ss-list a.ssl-item.ep-item')
+    for item in episode_list_items:
+        episodes.append({
+            'episode_number': item.get('data-number'),
+            'title': item.select_one('.ep-name').get_text(strip=True),
+            'url': urljoin(BASE_URL, item['href'])
+        })
+    
+    return {
+        'title': title, 'detail_page_url': urljoin(BASE_URL, detail_url), 'image_url': image_url,
+        'description': description, 'streaming_iframe_url': streaming_url,
+        'servers': servers, 'episodes': episodes
+    }
+
+def _parse_detail_page(soup, detail_url):
+    """Fallback untuk mem-parsing data dari halaman detail (data terbatas)."""
+    title_element = soup.select_one('.anisc-detail .film-name a')
+    title = title_element.get_text(strip=True) if title_element else None
+    if not title: return None
+
+    description_element = soup.select_one('.anisc-detail .film-description')
+    description = description_element.get_text(strip=True).replace("...Read more", "").strip() if description_element else "No description available."
+    
+    poster_element = soup.select_one('.anisc-poster .film-poster-img')
+    image_url = poster_element['src'] if poster_element and poster_element.has_attr('src') else None
+
+    return {
+        'title': title, 'detail_page_url': urljoin(BASE_URL, detail_url), 'image_url': image_url,
+        'description': description, 'streaming_iframe_url': None,
+        'servers': {'sub': [], 'dub': []}, 'episodes': []
+    }
+
+def scrape_anime_data(detail_url):
     """
-    Mengambil detail lengkap dari halaman tonton anime, termasuk URL streaming,
-    server, dan daftar episode.
+    Logika utama: Coba ambil dari halaman /watch, jika 404, ambil dari halaman detail.
     """
-    try:
-        watch_url = urljoin(BASE_URL, f"/watch{detail_url.split('?')[0].replace('.to//', '.to/')}")
-        
-        response = fetch_with_retry(watch_url)
-        if not response:
-            return None
+    # 1. Coba halaman tonton (/watch/...) untuk data lengkap
+    watch_url = urljoin(BASE_URL, f"/watch{detail_url.split('?')[0]}")
+    response = fetch_with_retry(watch_url)
 
-        soup = BeautifulSoup(response.content, 'html.parser')
+    if response:
+        try:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            data = _parse_watch_page(soup, detail_url)
+            if data: return data
+        except Exception as e:
+            print(f"  -> Error parsing watch page {watch_url}: {e}")
 
-        title_element = soup.select_one('.anisc-detail .film-name a')
-        title = title_element.get_text(strip=True) if title_element else "N/A"
-        
-        if title == "N/A": # Jika halaman tidak valid atau tidak ada judul
-            return None
-
-        description_element = soup.select_one('.film-description .text')
-        description = description_element.get_text(strip=True).replace("... + More", "").strip() if description_element else "No description available."
-        
-        poster_element = soup.select_one('.anisc-poster .film-poster-img')
-        image_url = poster_element['src'] if poster_element else None
-
-        iframe_element = soup.select_one('iframe#iframe-embed')
-        streaming_url = iframe_element['src'] if iframe_element else None
-
-        servers = {'sub': [], 'dub': []}
-        server_blocks = soup.select('.ps_-block .ps__-list')
-        for block in server_blocks:
-            server_type = 'dub' if 'servers-dub' in block.find_previous('div').get('class', []) else 'sub'
-            server_items = block.select('.server-item')
-            for item in server_items:
-                server_name = item.get_text(strip=True)
-                data_id = item.get('data-id')
-                servers[server_type].append({'name': server_name, 'data_id': data_id})
-
-        episodes = []
-        episode_list_items = soup.select('.ss-list a.ssl-item.ep-item')
-        for item in episode_list_items:
-            ep_number = item.get('data-number')
-            ep_title = item.select_one('.ep-name').get_text(strip=True)
-            ep_url = urljoin(BASE_URL, item['href'])
-            episodes.append({
-                'episode_number': ep_number,
-                'title': ep_title,
-                'url': ep_url
-            })
-            
-        return {
-            'title': title,
-            'detail_page_url': urljoin(BASE_URL, detail_url),
-            'image_url': image_url,
-            'description': description,
-            'streaming_iframe_url': streaming_url,
-            'servers': servers,
-            'episodes': episodes
-        }
-    except Exception as e:
-        print(f"An error occurred while parsing details for {detail_url}: {e}")
-        return None
+    # 2. Jika halaman /watch gagal atau tidak ada (404), beralih ke halaman detail
+    # print(f"  -> Watch page failed for {detail_url}. Falling back to detail page.")
+    detail_page_url = urljoin(BASE_URL, detail_url)
+    detail_response = fetch_with_retry(detail_page_url)
+    if detail_response:
+        try:
+            detail_soup = BeautifulSoup(detail_response.content, 'html.parser')
+            return _parse_detail_page(detail_soup, detail_url)
+        except Exception as e:
+            print(f"  -> Error parsing detail page {detail_page_url}: {e}")
+    
+    return None
 
 def scrape_homepage():
-    """
-    Mengambil semua kategori dan daftar anime dari halaman utama.
-    """
+    """Mengambil semua kategori dan URL anime dari halaman utama."""
     print("Starting homepage scrape...")
     home_url = urljoin(BASE_URL, "/home")
-    
     response = fetch_with_retry(home_url)
     if not response:
-        print("Failed to fetch homepage. Exiting.")
+        print("Fatal: Failed to fetch homepage. Exiting.")
         return {}, []
 
     soup = BeautifulSoup(response.content, 'html.parser')
-    
     unique_detail_urls = set()
     sections = {}
 
@@ -121,81 +149,66 @@ def scrape_homepage():
     
     for section in all_sections:
         header_element = section.select_one('.bah-heading h2.cat-heading, .anif-block-header')
-        
-        if section.select_one('#slider'):
-            header_text = 'Spotlight'
-        elif not header_element:
-            continue
-        else:
-            header_text = header_element.get_text(strip=True)
-            
-        key = header_text.lower().replace(' ', '_').replace('on_aniwatch', '')
-        
+        header_text = 'Spotlight' if section.select_one('#slider') else header_element.get_text(strip=True) if header_element else None
+        if not header_text: continue
+
+        key = sanitize_key(header_text)
         items = section.select('.flw-item, .deslide-item, .item-qtip, .anif-block li')
-        
         if not items: continue
 
         section_urls = []
         for item in items:
             link_element = item.select_one('a.film-poster-ahref, .desi-buttons a.btn-secondary, a.film-poster')
             if link_element and link_element.has_attr('href'):
-                href = link_element['href']
-                if '/watch/' in href:
-                    href = href.replace('/watch/', '/')
-                
-                # Menghindari duplikasi dalam satu sesi
-                if href not in unique_detail_urls:
-                    unique_detail_urls.add(href)
+                href = link_element['href'].replace('/watch/', '/')
+                if href not in section_urls:
                     section_urls.append(href)
-
+        
         if section_urls:
-            # Hanya tambahkan section jika ada URL di dalamnya
+            unique_detail_urls.update(section_urls)
             sections[key] = section_urls
             
     print(f"Found {len(unique_detail_urls)} unique anime entries to process.")
     return sections, list(unique_detail_urls)
 
 def main():
-    """
-    Fungsi utama untuk menjalankan scraper, memproses data, dan menyimpan ke JSON.
-    """
+    """Fungsi utama untuk menjalankan seluruh proses scraper."""
     sections, detail_urls = scrape_homepage()
-    if not detail_urls:
-        print("No anime URLs found on the homepage. Exiting.")
-        return
+    if not detail_urls: return
 
     all_anime_details = {}
     
-    # Kurangi worker menjadi 5 dan tambahkan jeda untuk mengurangi beban server
     with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_url = {executor.submit(scrape_episode_details, url): url for url in detail_urls}
+        future_to_url = {executor.submit(scrape_anime_data, url): url for url in detail_urls}
         
         for i, future in enumerate(as_completed(future_to_url)):
             url = future_to_url[future]
+            print(f"({i+1}/{len(detail_urls)}) Processing: {url}", end="")
             try:
                 data = future.result()
-                # Hanya proses data yang valid (bukan None dan punya judul)
-                if data and data.get('title') != "N/A":
+                if data and data.get('title') and data.get('title') != "N/A":
                     all_anime_details[url] = data
-                    print(f"({i+1}/{len(detail_urls)}) Successfully scraped: {data['title']}")
+                    print(f" -> ✓ Success: {data['title']}")
                 else:
-                    print(f"({i+1}/{len(detail_urls)}) Failed or got invalid data for URL: {url}")
+                    print(f" -> ✗ Failed or no data found.")
             except Exception as exc:
-                print(f"URL {url} generated an exception: {exc}")
+                print(f" -> ✗ Exception: {exc}")
             
-            # Tambahkan jeda acak antara 0.2 hingga 0.5 detik
-            time.sleep(random.uniform(0.2, 0.5))
+            time.sleep(random.uniform(0.4, 0.8)) # Jeda yang lebih 'sopan'
 
     final_data = {}
     for section_name, urls in sections.items():
-        # Hanya masukkan anime yang berhasil di-scrape
-        final_data[section_name] = [all_anime_details[url] for url in urls if url in all_anime_details]
+        # Masukkan data ke section-nya masing-masing
+        section_data = [all_anime_details[url] for url in urls if url in all_anime_details]
+        # Hanya tambahkan section ke output jika berisi data
+        if section_data:
+            final_data[section_name] = section_data
 
     file_path = os.path.join(os.path.dirname(__file__), 'anime_data.json')
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(final_data, f, indent=4, ensure_ascii=False)
 
-    print(f"\nScraping complete. All data has been saved to {file_path}")
+    print(f"\nScraping complete. Data saved to {file_path}")
 
 if __name__ == '__main__':
     main()
