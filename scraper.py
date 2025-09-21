@@ -6,13 +6,14 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-from playwright_stealth import stealth_sync
+# --- PERBAIKAN: Nama impor yang benar adalah sync_stealth ---
+from playwright_stealth import sync_stealth
 
 # --- Konfigurasi ---
 BASE_URL = "https://aniwatchtv.to"
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-MAX_WORKERS = 2 # Menggunakan lebih sedikit worker agar tidak membebani server
-MAX_RETRIES = 2 # Jumlah percobaan ulang untuk URL yang gagal
+MAX_WORKERS = 2
+MAX_RETRIES = 2
 
 def sanitize_key(text):
     """Membersihkan teks untuk dijadikan kunci JSON yang valid."""
@@ -20,9 +21,8 @@ def sanitize_key(text):
     return re.sub(r'[^a-z0-9_]', '', text)
 
 def _parse_watch_page(page, detail_url):
-    """Helper untuk mem-parsing data dari halaman /watch (data lengkap)."""
-    # Menunggu elemen kunci muncul
-    page.wait_for_selector('iframe#iframe-embed', timeout=20000)
+    """Helper untuk mem-parsing data dari halaman /watch."""
+    page.wait_for_selector('iframe#iframe-embed', timeout=25000)
     
     title = page.locator('.anisc-detail .film-name a').inner_text(timeout=5000)
     description = page.locator('.film-description .text').inner_text(timeout=5000).replace("... + More", "").strip()
@@ -50,9 +50,8 @@ def _parse_watch_page(page, detail_url):
     }
 
 def _parse_detail_page(page, detail_url):
-    """Fallback untuk mem-parsing data dari halaman detail (data terbatas)."""
-    # Menunggu elemen kunci muncul
-    page.wait_for_selector('.anisc-detail .film-name a', timeout=20000)
+    """Fallback untuk mem-parsing data dari halaman detail."""
+    page.wait_for_selector('.anisc-detail .film-name a', timeout=25000)
 
     title = page.locator('.anisc-detail .film-name a').inner_text(timeout=5000)
     description = page.locator('.anisc-detail .film-description').inner_text(timeout=5000).replace("...Read more", "").strip()
@@ -65,25 +64,18 @@ def _parse_detail_page(page, detail_url):
     }
 
 def scrape_anime_data(url, browser):
-    """
-    Logika utama: Coba ambil dari halaman /watch, jika gagal, beralih ke halaman detail.
-    Setiap proses berjalan di konteks browser baru untuk isolasi maksimal.
-    """
+    """Logika utama: Coba ambil dari halaman /watch, jika gagal, beralih ke halaman detail."""
     context = browser.new_context(user_agent=USER_AGENT)
     page = context.new_page()
-    stealth_sync(page)
+    # --- PERBAIKAN: Menggunakan fungsi yang benar, yaitu sync_stealth ---
+    sync_stealth(page)
     try:
-        # 1. Coba halaman tonton (/watch/...) untuk data lengkap
         watch_url = urljoin(BASE_URL, f"/watch{url.split('?')[0]}")
         page.goto(watch_url, timeout=60000, wait_until='domcontentloaded')
-
         if "404" in page.title() or "Page not found" in page.inner_text('body', timeout=5000):
             raise PlaywrightTimeoutError("Navigated to 404 page, falling back.")
-
         return _parse_watch_page(page, url)
-
     except Exception:
-        # 2. Jika halaman /watch gagal, beralih ke halaman detail
         try:
             detail_url = urljoin(BASE_URL, url)
             page.goto(detail_url, timeout=60000, wait_until='domcontentloaded')
@@ -98,11 +90,12 @@ def scrape_homepage(browser):
     """Mengambil semua kategori dan URL anime dari halaman utama."""
     context = browser.new_context(user_agent=USER_AGENT)
     page = context.new_page()
-    stealth_sync(page)
+    # --- PERBAIKAN: Menggunakan fungsi yang benar, yaitu sync_stealth ---
+    sync_stealth(page)
     print("Starting homepage scrape...")
     try:
         page.goto(urljoin(BASE_URL, "/home"), timeout=60000, wait_until='domcontentloaded')
-        page.wait_for_selector('section.block_area', timeout=20000)
+        page.wait_for_selector('section.block_area', timeout=25000)
 
         unique_detail_urls = set()
         sections = {}
@@ -147,16 +140,16 @@ def main():
 
         all_anime_details = {}
         failed_urls = detail_urls.copy()
-
+        
         for i in range(MAX_RETRIES + 1):
-            if not failed_urls: break # Keluar jika semua sudah berhasil
+            if not failed_urls: break
             
             current_batch = failed_urls.copy()
-            failed_urls.clear() # Kosongkan untuk diisi lagi oleh yang gagal
+            failed_urls.clear()
             
             if i > 0:
                 print(f"\n--- Starting Retry Attempt {i}/{MAX_RETRIES} for {len(current_batch)} failed URLs ---")
-                time.sleep(5) # Jeda panjang sebelum mencoba lagi
+                time.sleep(5)
 
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 future_to_url = {executor.submit(scrape_anime_data, url, browser): url for url in current_batch}
