@@ -1,51 +1,39 @@
-{
-    "spotlight": [
-        {
-            "title": "My Dress-Up Darling Season 2",
-            "detail_page_url": "https://aniwatchtv.to/my-dress-up-darling-season-2-19794",
-            "image_url": "https://cdn.noitatnemucod.net/thumbnail/300x400/100/41c10d21a2be8f2aef7491504eb64444.jpg",
-            "description": "The second season of Sono Bisque Doll wa Koi wo Suru. When Marin Kitagawa and Wakana Gojo met, they grew close over their love for cosplay. Through interacting with classmates and making new cosplay friends, Marin and Wakana’s world keeps growing. New developments arise as Marin’s love for Wakana continues to be filled with endless excitement. In their ever-expanding world, Marin and Wakana’s story of cosplay and thrills continues!",
-            "streaming_iframe_url": "https://megacloud.blog/embed-2/v3/e-1/....",
-            "servers": {
-                "sub": [
-                    {
-                        "name": "VidSrc",
-                        "data_id": "1332415"
-                    },
-                    {
-                        "name": "MegaCloud",
-                        "data_id": "1332414"
-                    }
-                ],
-                "dub": [
-                    {
-                        "name": "VidSrc",
-                        "data_id": "1332417"
-                    },
-                    {
-                        "name": "MegaCloud",
-                        "data_id": "1332416"
-                    }
-                ]
-            },
-            "episodes": [
-                {
-                    "episode_number": "1",
-                    "title": "Someone Who Lives in the Exact Opposite World as Me",
-                    "url": "https://aniwatchtv.to/watch/my-dress-up-darling-season-2-19794?ep=142010"
-                },
-                {
-                    "episode_number": "2",
-                    "title": "Wanna Hurry Up, and Do It?",
-                    "url": "https://aniwatchtv.to/watch/my-dress-up-darling-season-2-19794?ep=142011"
-                }
-            ]
-        }
-    ],
-    "trending": [
-        ...
-    ],
-    "latest_episodes": [
-        ...
-    ]
-}
+name: Scrape AniWatch Data
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Jalankan setiap 6 jam
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Izinkan pemicuan manual
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Run scraper
+        run: python scraper.py
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add anime_data.json
+          # Lakukan commit hanya jika ada perubahan pada file
+          git diff --staged --quiet || (git commit -m "Update anime data" && git push)
