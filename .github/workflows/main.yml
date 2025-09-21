@@ -12,6 +12,10 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    
+    # TAMBAHKAN BLOK INI UNTUK MEMBERI IZIN
+    permissions:
+      contents: write # Beri izin untuk menulis (commit & push) ke repositori
 
     steps:
       - name: Checkout repository
