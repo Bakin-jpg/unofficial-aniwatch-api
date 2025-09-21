@@ -1,0 +1,51 @@
+{
+    "spotlight": [
+        {
+            "title": "My Dress-Up Darling Season 2",
+            "detail_page_url": "https://aniwatchtv.to/my-dress-up-darling-season-2-19794",
+            "image_url": "https://cdn.noitatnemucod.net/thumbnail/300x400/100/41c10d21a2be8f2aef7491504eb64444.jpg",
+            "description": "The second season of Sono Bisque Doll wa Koi wo Suru. When Marin Kitagawa and Wakana Gojo met, they grew close over their love for cosplay. Through interacting with classmates and making new cosplay friends, Marin and Wakana’s world keeps growing. New developments arise as Marin’s love for Wakana continues to be filled with endless excitement. In their ever-expanding world, Marin and Wakana’s story of cosplay and thrills continues!",
+            "streaming_iframe_url": "https://megacloud.blog/embed-2/v3/e-1/....",
+            "servers": {
+                "sub": [
+                    {
+                        "name": "VidSrc",
+                        "data_id": "1332415"
+                    },
+                    {
+                        "name": "MegaCloud",
+                        "data_id": "1332414"
+                    }
+                ],
+                "dub": [
+                    {
+                        "name": "VidSrc",
+                        "data_id": "1332417"
+                    },
+                    {
+                        "name": "MegaCloud",
+                        "data_id": "1332416"
+                    }
+                ]
+            },
+            "episodes": [
+                {
+                    "episode_number": "1",
+                    "title": "Someone Who Lives in the Exact Opposite World as Me",
+                    "url": "https://aniwatchtv.to/watch/my-dress-up-darling-season-2-19794?ep=142010"
+                },
+                {
+                    "episode_number": "2",
+                    "title": "Wanna Hurry Up, and Do It?",
+                    "url": "https://aniwatchtv.to/watch/my-dress-up-darling-season-2-19794?ep=142011"
+                }
+            ]
+        }
+    ],
+    "trending": [
+        ...
+    ],
+    "latest_episodes": [
+        ...
+    ]
+}
